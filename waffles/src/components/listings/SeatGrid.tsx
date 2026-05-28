@@ -2,12 +2,23 @@
 
 import { useState } from "react";
 import { useUser } from "@/hooks/useUser";
+import { useIsChef } from "@/hooks/useIsChef";
+import Avatar from "@/components/ui/Avatar";
 
 interface Seat {
   id: string;
   seat_number: number;
   status: string;
   holder_id: string | null;
+}
+
+interface HolderProfile {
+  id: string;
+  username: string;
+  display_name: string | null;
+  avatar_url: string | null;
+  rep_score: number;
+  stack_tier: string;
 }
 
 interface SeatGridProps {
@@ -18,7 +29,16 @@ interface SeatGridProps {
   waffleId: string;
   waffleStatus: string;
   chefId: string;
+  holderProfiles: Record<string, HolderProfile>;
 }
+
+const STACK_EMOJIS: Record<string, number> = {
+  short_stack: 1,
+  fresh_stack: 2,
+  rising_stack: 3,
+  buttery_stack: 4,
+  golden_stack: 5,
+};
 
 export default function SeatGrid({
   seats,
@@ -28,18 +48,30 @@ export default function SeatGrid({
   waffleId,
   waffleStatus,
   chefId,
+  holderProfiles,
 }: SeatGridProps) {
   const { authUser } = useUser();
+  const isChef = useIsChef(chefId);
   const [selected, setSelected] = useState<number[]>([]);
+  const [modalData, setModalData] = useState<{ profile: HolderProfile; seatNum: number } | null>(null);
 
   const seatMap = new Map(seats.map((s) => [s.seat_number, s]));
   const isActive = waffleStatus === "active";
-  const isChef = authUser?.id === chefId;
 
-  function toggleSeat(num: number) {
-    if (isChef || !allowChoice || !isActive) return;
+  function handleSeatClick(num: number) {
     const seat = seatMap.get(num);
-    if (seat && seat.status !== "available") return;
+    const isTaken = seat && seat.status !== "available";
+
+    // Taken seat with a known profile → open modal
+    if (isTaken && seat.holder_id && holderProfiles[seat.holder_id]) {
+      setModalData({ profile: holderProfiles[seat.holder_id], seatNum: num });
+      return;
+    }
+
+    // Available seat — chef can't pick, respect allowChoice
+    if (isChef || !allowChoice || !isActive) return;
+    if (isTaken) return;
+
     setSelected((prev) =>
       prev.includes(num) ? prev.filter((n) => n !== num) : [...prev, num]
     );
@@ -51,11 +83,29 @@ export default function SeatGrid({
     const isMine = seat?.holder_id === authUser?.id && !isChef;
     const isSelectedByMe = selected.includes(num);
 
-    if (isMine)         return "bg-blue-100 border-blue-300 text-blue-700 cursor-default";
-    if (isTaken)        return "bg-gray-100 border-gray-200 text-gray-400 cursor-not-allowed";
-    if (isSelectedByMe) return "bg-orange-400 border-orange-500 text-white scale-105 cursor-pointer";
-    if (isChef)         return "bg-white border-gray-200 text-gray-500 cursor-default";
-    return "bg-white border-gray-200 text-gray-700 hover:border-orange-300 cursor-pointer";
+    if (isMine)          return "bg-blue-100 border-blue-300 text-blue-700 cursor-default";
+    if (isTaken)         return "bg-gray-300 border-gray-400 text-gray-500 cursor-pointer";
+    if (isSelectedByMe)  return "bg-orange-400 border-orange-500 text-white scale-105 cursor-pointer";
+    if (isChef)          return "bg-green-50 border-green-300 text-green-700 cursor-default";
+    return "bg-green-50 border-green-300 text-green-700 hover:bg-green-100 hover:border-green-400 cursor-pointer";
+  }
+
+  function renderSeatContent(num: number) {
+    const seat = seatMap.get(num);
+    const isTaken = seat && seat.status !== "available";
+    const holderId = seat?.holder_id;
+    const profile = holderId ? holderProfiles[holderId] : null;
+
+    if (isTaken && profile) {
+      return (
+        <div className="flex flex-col items-center justify-center gap-0.5">
+          <Avatar profile={profile} size="sm" />
+          <span className="text-[9px] font-medium leading-none">{num}</span>
+        </div>
+      );
+    }
+
+    return <span className="text-xs font-medium">{num}</span>;
   }
 
   const totalSelected = selected.length;
@@ -68,10 +118,28 @@ export default function SeatGrid({
 
   return (
     <div>
+      {/* Context-aware heading */}
+      {isChef ? (
+        <h2 className="text-base font-semibold text-gray-900 mb-4">Seat status</h2>
+      ) : isActive ? (
+        <div className="mb-4">
+          <h2 className="text-base font-semibold text-gray-900">
+            {allowChoice ? "Select your seat" : "Seat map"}
+          </h2>
+          <p className="text-xs text-gray-400 mt-0.5">
+            {allowChoice
+              ? "Tap any open seat to select it — you can pick multiple. Each seat is one entry in The Draw."
+              : "Seats are randomly assigned at checkout — the grid shows who's already in."}
+          </p>
+        </div>
+      ) : (
+        <h2 className="text-base font-semibold text-gray-900 mb-4">Seats</h2>
+      )}
+
       {/* Legend */}
       <div className="flex flex-wrap gap-4 mb-4 text-xs text-gray-500">
         <div className="flex items-center gap-1.5">
-          <div className="w-4 h-4 rounded border border-gray-200 bg-white" />
+          <div className="w-4 h-4 rounded border border-green-300 bg-green-50" />
           Available
         </div>
         {!isChef && (
@@ -81,7 +149,7 @@ export default function SeatGrid({
           </div>
         )}
         <div className="flex items-center gap-1.5">
-          <div className="w-4 h-4 rounded border border-gray-200 bg-gray-100" />
+          <div className="w-4 h-4 rounded border border-gray-400 bg-gray-300" />
           Taken
         </div>
         {authUser && !isChef && (
@@ -95,7 +163,7 @@ export default function SeatGrid({
       {/* Chef view-only notice */}
       {isChef && (
         <div className="mb-3 px-3 py-2 bg-blue-50 border border-blue-200 rounded-lg text-xs text-blue-700">
-          You are viewing this as the Chef. Seat selection is disabled.
+          You are viewing this Waffle as the Chef.
         </div>
       )}
 
@@ -105,14 +173,10 @@ export default function SeatGrid({
           <button
             key={num}
             type="button"
-            onClick={() => toggleSeat(num)}
-            disabled={isChef || !isActive || seatMap.get(num)?.status !== "available"}
-            className={`
-              aspect-square rounded border text-xs font-medium transition-all
-              ${getSeatStyle(num)}
-            `}
+            onClick={() => handleSeatClick(num)}
+            className={`aspect-square rounded border transition-all flex items-center justify-center ${getSeatStyle(num)}`}
           >
-            {num}
+            {renderSeatContent(num)}
           </button>
         ))}
       </div>
@@ -141,7 +205,7 @@ export default function SeatGrid({
               }}
               className="flex-grow py-2 rounded-lg bg-orange-400 hover:bg-orange-500 text-white text-sm font-medium transition-colors"
             >
-              Reserve {totalSelected} seat{totalSelected > 1 ? "s" : ""} - ${totalCost.toFixed(2)}
+              Reserve {totalSelected} seat{totalSelected > 1 ? "s" : ""} — ${totalCost.toFixed(2)}
             </button>
           </div>
         </div>
@@ -155,8 +219,53 @@ export default function SeatGrid({
 
       {!isActive && !isChef && (
         <p className="mt-4 text-sm text-gray-400 text-center">
-          This Waffle is {waffleStatus} - seats are no longer available.
+          This Waffle is {waffleStatus} — seats are no longer available.
         </p>
+      )}
+
+      {/* Seat holder profile modal */}
+      {modalData && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
+          onClick={() => setModalData(null)}
+        >
+          <div
+            className="bg-white rounded-2xl shadow-xl p-6 w-72 relative"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <button
+              type="button"
+              onClick={() => setModalData(null)}
+              className="absolute top-3 right-3 text-gray-400 hover:text-gray-600 text-lg leading-none"
+            >
+              ×
+            </button>
+
+            <div className="flex flex-col items-center text-center gap-2">
+              <Avatar profile={modalData.profile} size="lg" />
+
+              <div>
+                <div className="font-semibold text-gray-900 text-base">
+                  {modalData.profile.display_name || modalData.profile.username}
+                </div>
+                <div className="text-xs text-gray-400">@{modalData.profile.username}</div>
+              </div>
+
+              <div className="text-lg">
+                {"🧇".repeat(STACK_EMOJIS[modalData.profile.stack_tier] ?? 1)}
+              </div>
+
+              <div className="flex items-center gap-1 text-sm text-gray-600">
+                <span className="font-semibold text-gray-900">{modalData.profile.rep_score.toFixed(1)}</span>
+                <span>rep</span>
+              </div>
+
+              <div className="mt-1 px-3 py-1.5 bg-gray-100 rounded-full text-xs text-gray-500">
+                Holding seat #{modalData.seatNum}
+              </div>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

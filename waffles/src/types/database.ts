@@ -717,6 +717,7 @@ export type Database = {
           shipping_carrier:
             | Database["public"]["Enums"]["shipping_carrier"]
             | null
+          shipping_method: string
           status: Database["public"]["Enums"]["waffle_status"]
           third_party_deadline: string | null
           third_party_verify: boolean
@@ -765,6 +766,7 @@ export type Database = {
           shipping_carrier?:
             | Database["public"]["Enums"]["shipping_carrier"]
             | null
+          shipping_method?: string
           status?: Database["public"]["Enums"]["waffle_status"]
           third_party_deadline?: string | null
           third_party_verify?: boolean
@@ -813,6 +815,7 @@ export type Database = {
           shipping_carrier?:
             | Database["public"]["Enums"]["shipping_carrier"]
             | null
+          shipping_method?: string
           status?: Database["public"]["Enums"]["waffle_status"]
           third_party_deadline?: string | null
           third_party_verify?: boolean
@@ -856,7 +859,22 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
-      [_ in never]: never
+      create_waffle: {
+        Args: {
+          p_allow_seat_choice: boolean
+          p_category: string
+          p_deadline: string
+          p_description: string
+          p_draw_style: Database["public"]["Enums"]["draw_style"]
+          p_draw_type: Database["public"]["Enums"]["draw_type"]
+          p_item: Json
+          p_seat_price: number
+          p_shipping_method: string
+          p_title: string
+          p_total_seats: number
+        }
+        Returns: Json
+      }
     }
     Enums: {
       chef_tier: "new_chef" | "trusted_chef" | "established_chef" | "power_chef"

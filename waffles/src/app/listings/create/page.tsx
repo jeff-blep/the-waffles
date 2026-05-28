@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { useUser } from "@/hooks/useUser";
@@ -37,6 +37,9 @@ const DRAW_STYLES: { value: DrawStyle; label: string; emoji: string; description
 ];
 
 const LIVE_DRAW_THRESHOLD = 500000; // $5,000 in cents
+const MAX_PHOTO_BYTES = 10 * 1024 * 1024; // 10 MB
+const MAX_PHOTOS = 10;
+const ACCEPTED_PHOTO_TYPES = ["image/jpeg", "image/png", "image/webp", "image/gif"];
 
 function formatCurrency(cents: number): string {
   if (cents === 0) return "";
@@ -53,24 +56,47 @@ function parseCurrencyInput(val: string): number {
   return Math.round(num * 100);
 }
 
+// Interpret a yyyy-mm-dd date input as 11:59:59.999 PM in the user's local timezone.
+function endOfDayLocal(yyyyMmDd: string): Date {
+  const [y, m, d] = yyyyMmDd.split("-").map(Number);
+  return new Date(y, m - 1, d, 23, 59, 59, 999);
+}
+
 export default function CreateWafflePage() {
   const router = useRouter();
   const supabase = createClient();
-  const { authUser, isLoggedIn, loading } = useUser();
+  const { isLoggedIn, loading } = useUser();
 
   // Item details
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [category, setCategory] = useState(CATEGORIES[0]);
   const [condition, setCondition] = useState<ItemCondition>("A");
-  const [isNew, setIsNew] = useState(false);
   const [declaredValueDisplay, setDeclaredValueDisplay] = useState("");
   const [declaredValueCents, setDeclaredValueCents] = useState(0);
+
+  // Shipping
+  const [shippingMethod, setShippingMethod] = useState<"ship" | "meetup" | "ffl" | "ffl_meetup">("ship");
+  const [fflModalOpen, setFflModalOpen] = useState(false);
+  const [fflAcknowledged, setFflAcknowledged] = useState(false);
+
+  const isFirearms = category === "Firearms & Ammo";
+
+  // When category changes to Firearms, force FFL and open the modal
+  useEffect(() => {
+    if (isFirearms) {
+      setShippingMethod("ffl");
+      if (!fflAcknowledged) setFflModalOpen(true);
+    } else {
+      if (shippingMethod === "ffl" || shippingMethod === "ffl_meetup") setShippingMethod("ship");
+    }
+  }, [isFirearms]);
 
   // Photos
   const [photos, setPhotos] = useState<File[]>([]);
   const [photoError, setPhotoError] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
+  const [isDragging, setIsDragging] = useState(false);
 
   // Seat structure
   const [seatPriceDisplay, setSeatPriceDisplay] = useState("");
@@ -101,11 +127,13 @@ export default function CreateWafflePage() {
   const potCapCents = Math.round(declaredValueCents * 1.1);
   const potOverCap = totalPotCents > 0 && declaredValueCents > 0 && totalPotCents > potCapCents;
 
-  if (loading) return null;
-  if (!isLoggedIn) {
-    router.push("/auth/login?next=/listings/create");
-    return null;
-  }
+  useEffect(() => {
+    if (!loading && !isLoggedIn) {
+      router.replace("/auth/login?next=/listings/create");
+    }
+  }, [loading, isLoggedIn, router]);
+
+  if (loading || !isLoggedIn) return null;
 
   const tomorrow = new Date();
   tomorrow.setDate(tomorrow.getDate() + 1);
@@ -138,31 +166,82 @@ export default function CreateWafflePage() {
     }
   }
 
+  function processFiles(files: File[]) {
+    if (files.length === 0) return;
+
+    const accepted: File[] = [];
+    const rejections: string[] = [];
+
+    for (const file of files) {
+      // HEIC/HEIF: iPhones default to these; browsers can't render them inline.
+      const isHeic = /\.(heic|heif)$/i.test(file.name) || /heic|heif/i.test(file.type);
+      if (isHeic) {
+        rejections.push(`${file.name} is HEIC — convert to JPG first.`);
+        continue;
+      }
+      if (!ACCEPTED_PHOTO_TYPES.includes(file.type)) {
+        rejections.push(`${file.name} is not a supported image format.`);
+        continue;
+      }
+      if (file.size > MAX_PHOTO_BYTES) {
+        const mb = (file.size / 1024 / 1024).toFixed(1);
+        rejections.push(`${file.name} is ${mb} MB — limit is 10 MB.`);
+        continue;
+      }
+      accepted.push(file);
+    }
+
+    setPhotoError(rejections.length > 0 ? rejections.join(" ") : null);
+    if (accepted.length > 0) {
+      setPhotos((prev) => [...prev, ...accepted].slice(0, MAX_PHOTOS));
+    }
+  }
+
   function handlePhotoChange(e: React.ChangeEvent<HTMLInputElement>) {
     const files = Array.from(e.target.files ?? []);
-    if (files.length === 0) return;
-    const valid = files.filter((f) => f.type.startsWith("image/"));
-    if (valid.length === 0) {
-      setPhotoError("Please upload image files only.");
-      return;
-    }
-    setPhotoError(null);
-    setPhotos((prev) => [...prev, ...valid].slice(0, 10));
+    // Reset so picking the same file again still triggers onChange.
+    e.target.value = "";
+    processFiles(files);
+  }
+
+  function handleDragOver(e: React.DragEvent) {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(true);
+  }
+
+  function handleDragLeave(e: React.DragEvent) {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+  }
+
+  function handleDrop(e: React.DragEvent) {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+    processFiles(Array.from(e.dataTransfer.files));
   }
 
   function removePhoto(index: number) {
     setPhotos((prev) => prev.filter((_, i) => i !== index));
   }
 
-  async function uploadPhotos(waffleId: string, itemId: string): Promise<string[]> {
+  async function uploadPhotos(
+    waffleId: string,
+    itemId: string,
+    uploadedPaths: string[]
+  ): Promise<string[]> {
     const urls: string[] = [];
-    for (const photo of photos) {
-      const ext = photo.name.split(".").pop();
-      const path = `${waffleId}/${itemId}/${Date.now()}.${ext}`;
+    for (let i = 0; i < photos.length; i++) {
+      const photo = photos[i];
+      const ext = photo.name.split(".").pop()?.toLowerCase() ?? "jpg";
+      const path = `${waffleId}/${itemId}/${Date.now()}-${i}.${ext}`;
       const { error: uploadError } = await supabase.storage
         .from("waffle-photos")
-        .upload(path, photo);
+        .upload(path, photo, { contentType: photo.type });
       if (uploadError) throw uploadError;
+      uploadedPaths.push(path);
       const { data } = supabase.storage.from("waffle-photos").getPublicUrl(path);
       urls.push(data.publicUrl);
     }
@@ -199,66 +278,70 @@ export default function CreateWafflePage() {
       setError("Please set a deadline.");
       return;
     }
+    if (isFirearms && !fflAcknowledged) {
+      setError("You must acknowledge the FFL transfer requirements before listing a firearm.");
+      return;
+    }
 
     setSubmitting(true);
     setUploading(true);
 
+    let createdWaffleId: string | null = null;
+    const uploadedPaths: string[] = [];
+
     try {
-      // Create waffle
-      const { data: waffle, error: waffleError } = await supabase
-        .from("waffles")
-        .insert({
-          chef_id: authUser!.id,
-          title,
-          description,
-          category,
-          seat_price: seatPriceCents,
-          total_seats: totalSeatsInt,
-          allow_seat_choice: allowSeatChoice,
-          draw_style: drawStyle,
-          draw_type: wantsLiveDraw ? "live" : "automated",
-          deadline: new Date(deadline).toISOString(),
-          status: "active",
-        })
-        .select()
-        .single();
-
-      if (waffleError) throw waffleError;
-
-      // Upload photos then create item
-      const photoUrls = await uploadPhotos(waffle.id, waffle.id);
-      setUploading(false);
-
-      const { data: item, error: itemError } = await supabase
-        .from("waffle_items")
-        .insert({
-          waffle_id: waffle.id,
+      const { data: rpcData, error: rpcError } = await supabase.rpc("create_waffle", {
+        p_title: title,
+        p_description: description,
+        p_category: category,
+        p_seat_price: seatPriceCents,
+        p_total_seats: totalSeatsInt,
+        p_allow_seat_choice: allowSeatChoice,
+        p_draw_style: drawStyle,
+        p_draw_type: wantsLiveDraw ? "live" : "automated",
+        p_deadline: endOfDayLocal(deadline).toISOString(),
+        p_shipping_method: shippingMethod,
+        p_item: {
           title,
           description,
           condition,
-          is_new: isNew,
+          is_new: condition === "A+",
           declared_value: declaredValueCents,
-          photo_urls: photoUrls,
-          sort_order: 0,
-        })
-        .select()
-        .single();
+        },
+      });
 
-      if (itemError) throw itemError;
+      if (rpcError) throw rpcError;
 
-      // Create seats
-      const seats = Array.from({ length: totalSeatsInt }, (_, i) => ({
-        waffle_id: waffle.id,
-        seat_number: i + 1,
-        status: "available" as const,
-      }));
+      const { waffle_id, item_id } = rpcData as { waffle_id: string; item_id: string };
+      createdWaffleId = waffle_id;
 
-      const { error: seatsError } = await supabase.from("seats").insert(seats);
-      if (seatsError) throw seatsError;
+      const photoUrls = await uploadPhotos(waffle_id, item_id, uploadedPaths);
+      setUploading(false);
 
-      router.push(`/listings/${waffle.id}`);
+      const { error: updateError } = await supabase
+        .from("waffle_items")
+        .update({ photo_urls: photoUrls })
+        .eq("id", item_id);
+
+      if (updateError) throw updateError;
+
+      router.push(`/listings/${waffle_id}`);
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : "Something went wrong. Please try again.";
+      // Roll back: delete the waffle row (cascades to items + seats) and
+      // any photos that already made it to storage.
+      if (createdWaffleId) {
+        await supabase.from("waffles").delete().eq("id", createdWaffleId);
+      }
+      if (uploadedPaths.length > 0) {
+        await supabase.storage.from("waffle-photos").remove(uploadedPaths);
+      }
+      console.error("create_waffle error:", err);
+      const message =
+        err instanceof Error
+          ? err.message
+          : typeof err === "object" && err !== null && "message" in err
+          ? String((err as { message: unknown }).message)
+          : "Something went wrong. Please try again.";
       setError(message);
       setSubmitting(false);
       setUploading(false);
@@ -370,25 +453,87 @@ export default function CreateWafflePage() {
               </div>
             </div>
 
-            <div className="flex items-center gap-2">
-              <input
-                type="checkbox"
-                id="is-new"
-                checked={isNew}
-                onChange={(e) => setIsNew(e.target.checked)}
-                className="rounded border-gray-300"
-              />
-              <label htmlFor="is-new" className="text-sm text-gray-700">
-                This item is brand new
-              </label>
-            </div>
+          </section>
+
+          {/* Shipping */}
+          <section className="bg-white rounded-xl shadow-sm p-6 space-y-4">
+            <h2 className="text-lg font-semibold text-gray-900">Shipping</h2>
+
+            {isFirearms ? (
+              <div className="space-y-3">
+                <div className="grid grid-cols-2 gap-3">
+                  {[
+                    { value: "ffl" as const,        emoji: "📦", label: "Ship to FFL",      description: "You ship the firearm to the winner's FFL dealer" },
+                    { value: "ffl_meetup" as const, emoji: "🤝", label: "Meet at local FFL", description: "Hand off in person at a licensed FFL dealer" },
+                  ].map((opt) => (
+                    <button
+                      key={opt.value}
+                      type="button"
+                      onClick={() => {
+                        setShippingMethod(opt.value);
+                        if (!fflAcknowledged) setFflModalOpen(true);
+                      }}
+                      className={`text-left px-3 py-3 rounded-lg border transition-colors ${
+                        shippingMethod === opt.value
+                          ? "border-orange-400 bg-orange-50"
+                          : "border-gray-200 hover:border-gray-300"
+                      }`}
+                    >
+                      <div className="flex items-center gap-2 mb-0.5">
+                        <span className="text-base">{opt.emoji}</span>
+                        <span className="font-semibold text-sm text-gray-900">{opt.label}</span>
+                      </div>
+                      <div className="text-xs text-gray-400 leading-snug">{opt.description}</div>
+                    </button>
+                  ))}
+                </div>
+
+                {!fflAcknowledged ? (
+                  <button
+                    type="button"
+                    onClick={() => setFflModalOpen(true)}
+                    className="text-xs text-orange-500 hover:underline font-medium"
+                  >
+                    Review and acknowledge FFL requirements →
+                  </button>
+                ) : (
+                  <div className="flex items-center gap-1 text-xs text-green-600 font-medium">
+                    <span>✓</span> FFL requirements acknowledged
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div className="grid grid-cols-2 gap-3">
+                {[
+                  { value: "ship" as const,   emoji: "📦", label: "Ship it",       description: "You ship the item to the winner" },
+                  { value: "meetup" as const, emoji: "🤝", label: "Local meetup",  description: "Hand off in person — details via messaging" },
+                ].map((opt) => (
+                  <button
+                    key={opt.value}
+                    type="button"
+                    onClick={() => setShippingMethod(opt.value)}
+                    className={`text-left px-3 py-3 rounded-lg border transition-colors ${
+                      shippingMethod === opt.value
+                        ? "border-orange-400 bg-orange-50"
+                        : "border-gray-200 hover:border-gray-300"
+                    }`}
+                  >
+                    <div className="flex items-center gap-2 mb-0.5">
+                      <span className="text-base">{opt.emoji}</span>
+                      <span className="font-semibold text-sm text-gray-900">{opt.label}</span>
+                    </div>
+                    <div className="text-xs text-gray-400 leading-snug">{opt.description}</div>
+                  </button>
+                ))}
+              </div>
+            )}
           </section>
 
           {/* Photos */}
           <section className="bg-white rounded-xl shadow-sm p-6 space-y-4">
             <div className="flex items-center justify-between">
               <h2 className="text-lg font-semibold text-gray-900">Photos</h2>
-              <span className="text-xs text-gray-400">{photos.length}/10</span>
+              <span className="text-xs text-gray-400">{photos.length}/{MAX_PHOTOS}</span>
             </div>
 
             {photos.length > 0 && (
@@ -417,19 +562,29 @@ export default function CreateWafflePage() {
               </div>
             )}
 
-            <label className={`flex flex-col items-center justify-center w-full h-28 border-2 border-dashed rounded-lg cursor-pointer transition-colors ${
-              photoError ? "border-red-300 bg-red-50" : "border-gray-200 bg-gray-50 hover:border-orange-300 hover:bg-orange-50"
-            }`}>
+            <label
+              className={`flex flex-col items-center justify-center w-full h-28 border-2 border-dashed rounded-lg cursor-pointer transition-colors ${
+                isDragging
+                  ? "border-orange-400 bg-orange-50"
+                  : photoError
+                  ? "border-red-300 bg-red-50"
+                  : "border-gray-200 bg-gray-50 hover:border-orange-300 hover:bg-orange-50"
+              }`}
+              onDragOver={handleDragOver}
+              onDragEnter={handleDragOver}
+              onDragLeave={handleDragLeave}
+              onDrop={handleDrop}
+            >
               <div className="text-center">
-                <div className="text-2xl mb-1">📷</div>
+                <div className="text-2xl mb-1">{isDragging ? "⬇️" : "📷"}</div>
                 <p className="text-sm text-gray-500">
-                  {photos.length === 0 ? "Upload photos (at least 1 required)" : "Add more photos"}
+                  {isDragging ? "Drop to add photos" : photos.length === 0 ? "Upload photos (at least 1 required)" : "Add more photos"}
                 </p>
-                <p className="text-xs text-gray-400 mt-0.5">JPG, PNG, WebP up to 10MB each</p>
+                <p className="text-xs text-gray-400 mt-0.5">JPG, PNG, WebP, or GIF — up to 10 MB each (no HEIC)</p>
               </div>
               <input
                 type="file"
-                accept="image/*"
+                accept="image/jpeg,image/png,image/webp,image/gif"
                 multiple
                 onChange={handlePhotoChange}
                 className="hidden"
@@ -600,7 +755,7 @@ export default function CreateWafflePage() {
                 className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-orange-400"
               />
               <p className="text-xs text-gray-400 mt-1">
-                Maximum 30 days. Draw fires early if all seats fill before the deadline.
+                Maximum 30 days. Draws at 11:59 PM your local time on the selected day, or earlier if all seats fill first.
               </p>
             </div>
           </section>
@@ -613,13 +768,70 @@ export default function CreateWafflePage() {
 
           <button
             type="submit"
-            disabled={submitting || potOverCap}
+            disabled={submitting || potOverCap || (isFirearms && !fflAcknowledged)}
             className="w-full bg-orange-400 hover:bg-orange-500 text-white font-semibold py-3 rounded-xl transition-colors disabled:opacity-50 disabled:cursor-not-allowed text-base"
           >
             {uploading ? "Uploading photos..." : submitting ? "Creating your Waffle..." : "🧇 List this Waffle"}
           </button>
 
         </form>
+
+        {/* FFL acknowledgment modal */}
+        {fflModalOpen && (
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+            onClick={() => setFflModalOpen(false)}
+          >
+            <div
+              className="bg-white rounded-2xl shadow-xl max-w-md w-full p-6"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-center gap-2 mb-4">
+                <span className="text-2xl">🔒</span>
+                <h3 className="text-lg font-bold text-gray-900">Firearms Transfer Requirements</h3>
+              </div>
+
+              <div className="text-sm text-gray-600 space-y-3 mb-6 leading-relaxed">
+                <p>
+                  Federal law requires all firearm transfers to be conducted through a licensed Federal Firearms Licensee (FFL). By listing this item on Waffles, you acknowledge and agree to the following:
+                </p>
+                <ul className="list-disc list-inside space-y-1.5 text-gray-500">
+                  <li>The winning Diner must provide a valid FFL destination dealer before claiming their prize.</li>
+                  <li>You will ship the firearm directly to the winner's FFL dealer — not to the winner personally.</li>
+                  <li>All applicable state and federal laws governing firearm transfers apply and are your responsibility to comply with.</li>
+                  <li>FFL transfer fees are assumed to be included in the seat price you set.</li>
+                  <li>Waffles reserves the right to cancel or suspend any firearms listing at any time, for any reason, without liability.</li>
+                  <li>Misrepresentation of a firearm's legal status is grounds for immediate account termination and may be reported to authorities.</li>
+                </ul>
+                <p className="text-gray-500">
+                  This platform operates in compliance with all applicable federal and state firearms regulations. Listings that violate these requirements will be removed.
+                </p>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setFflAcknowledged(true);
+                  setFflModalOpen(false);
+                }}
+                className="w-full bg-orange-400 hover:bg-orange-500 text-white font-semibold py-2.5 rounded-xl transition-colors text-sm"
+              >
+                I understand and acknowledge these requirements
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setFflModalOpen(false);
+                  setCategory(CATEGORIES[0]);
+                }}
+                className="w-full mt-2 text-sm text-gray-400 hover:text-gray-600 py-1.5 transition-colors"
+              >
+                Cancel — change category
+              </button>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

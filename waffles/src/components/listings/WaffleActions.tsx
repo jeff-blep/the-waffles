@@ -1,6 +1,7 @@
 "use client";
 
 import { useUser } from "@/hooks/useUser";
+import { useIsChef } from "@/hooks/useIsChef";
 import { useRouter } from "next/navigation";
 
 interface WaffleActionsProps {
@@ -21,9 +22,8 @@ export default function WaffleActions({
   seatsSold,
 }: WaffleActionsProps) {
   const { authUser } = useUser();
+  const isChef = useIsChef(chefId);
   const router = useRouter();
-
-  const isChef = authUser?.id === chefId;
   const isActive = status === "active";
   const fillPercent = totalSeats > 0 ? Math.round((seatsSold / totalSeats) * 100) : 0;
   const halfFilled = seatsSold >= Math.ceil(totalSeats * 0.5);
@@ -53,6 +53,12 @@ export default function WaffleActions({
           <div className="flex justify-between text-xs text-gray-400">
             <span>{fillPercent}% filled</span>
             <span>{seatsRemaining} seat{seatsRemaining !== 1 ? "s" : ""} remaining</span>
+          </div>
+          <div className="flex justify-between text-sm border-t border-gray-200 pt-2 mt-1">
+            <span className="text-gray-600">At the table</span>
+            <span className="font-semibold text-green-600">
+              ${((seatsSold * seatPrice) / 100).toLocaleString("en-US", { minimumFractionDigits: 2 })}
+            </span>
           </div>
         </div>
 
