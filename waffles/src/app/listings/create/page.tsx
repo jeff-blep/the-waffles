@@ -270,7 +270,7 @@ export default function CreateWafflePage() {
     }
     if (potOverCap) {
       setError(
-        `Total pot ($${(totalPotCents / 100).toLocaleString("en-US", { minimumFractionDigits: 2 })}) cannot exceed 110% of item value ($${(potCapCents / 100).toLocaleString("en-US", { minimumFractionDigits: 2 })}). Lower your seat price or reduce seats.`
+        `Total seat value ($${(totalPotCents / 100).toLocaleString("en-US", { minimumFractionDigits: 2 })}) cannot exceed 110% of item value ($${(potCapCents / 100).toLocaleString("en-US", { minimumFractionDigits: 2 })}). Lower your seat price or reduce seats.`
       );
       return;
     }
@@ -638,7 +638,7 @@ export default function CreateWafflePage() {
             {/* Pot cap warning */}
             {potOverCap && (
               <div className="bg-red-50 border border-red-200 rounded-lg px-3 py-2 text-xs text-red-600">
-                Total pot exceeds 110% of declared item value. Reduce seat price or number of seats.
+                Total seat value exceeds 110% of declared item value. Reduce seat price or number of seats.
               </div>
             )}
 
@@ -646,7 +646,7 @@ export default function CreateWafflePage() {
             {seatPriceCents > 0 && totalSeatsInt > 0 && !potOverCap && (
               <div className="bg-amber-50 rounded-lg p-4 space-y-1.5 text-sm">
                 <div className="flex justify-between">
-                  <span className="text-gray-600">Total pot</span>
+                  <span className="text-gray-600">Seat revenue</span>
                   <span className="font-medium text-gray-900">
                     ${totalPot.toLocaleString("en-US", { minimumFractionDigits: 2 })}
                   </span>
@@ -736,7 +736,7 @@ export default function CreateWafflePage() {
                     </div>
                     <p className="text-xs text-gray-500 mt-1">
                       Real bingo-ball blower, human operator, streamed live and recorded.
-                      Available for pots over $5,000. Additional 5% fee applies.
+                      Available for items over $5,000. Additional 5% fee applies.
                     </p>
                   </label>
                 </div>

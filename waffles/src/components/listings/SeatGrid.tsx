@@ -3,6 +3,8 @@
 import { useState } from "react";
 import { useUser } from "@/hooks/useUser";
 import { useIsChef } from "@/hooks/useIsChef";
+import { useRouter } from "next/navigation";
+import { createClient } from "@/lib/supabase/client";
 import Avatar from "@/components/ui/Avatar";
 
 interface Seat {
@@ -52,11 +54,41 @@ export default function SeatGrid({
 }: SeatGridProps) {
   const { authUser } = useUser();
   const isChef = useIsChef(chefId);
+  const router = useRouter();
+  const supabase = createClient();
   const [selected, setSelected] = useState<number[]>([]);
+  const [quantity, setQuantity] = useState(1);
+  const [claiming, setClaiming] = useState(false);
+  const [claimError, setClaimError] = useState<string | null>(null);
+  const [claimSuccess, setClaimSuccess] = useState<number[] | null>(null);
   const [modalData, setModalData] = useState<{ profile: HolderProfile; seatNum: number } | null>(null);
 
   const seatMap = new Map(seats.map((s) => [s.seat_number, s]));
   const isActive = waffleStatus === "active";
+
+  async function handleClaim() {
+    if (claiming) return;
+    setClaiming(true);
+    setClaimError(null);
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data, error } = await (supabase.rpc as any)("claim_seats", {
+      p_waffle_id:    waffleId,
+      p_seat_numbers: allowChoice ? selected : [],
+      p_quantity:     allowChoice ? 0 : quantity,
+    }) as { data: { claimed_seats: number[]; waffle_filled: boolean } | null; error: { message: string } | null };
+
+    setClaiming(false);
+
+    if (error) {
+      setClaimError(error.message);
+      return;
+    }
+
+    setClaimSuccess(data?.claimed_seats ?? []);
+    setSelected([]);
+    router.refresh();
+  }
 
   function handleSeatClick(num: number) {
     const seat = seatMap.get(num);
@@ -118,6 +150,29 @@ export default function SeatGrid({
 
   return (
     <div>
+      {/* Success banner */}
+      {claimSuccess && (
+        <div className="mb-4 p-4 bg-green-50 border border-green-200 rounded-xl text-sm text-green-800 flex items-start gap-2">
+          <span className="text-green-500 mt-0.5">✓</span>
+          <div>
+            <span className="font-semibold">Seats reserved!</span>
+            {" "}Seat{claimSuccess.length > 1 ? "s" : ""}{" "}
+            {claimSuccess.sort((a, b) => a - b).join(", ")} are yours.
+            <span className="block text-xs text-green-600 mt-0.5">
+              In Phase 1 these are sandbox holds — real payment auth comes in Phase 2.
+            </span>
+          </div>
+        </div>
+      )}
+
+      {/* Error banner */}
+      {claimError && (
+        <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-xl text-sm text-red-700 flex items-start gap-2">
+          <span className="mt-0.5">⚠️</span>
+          <span>{claimError}</span>
+        </div>
+      )}
+
       {/* Context-aware heading */}
       {isChef ? (
         <h2 className="text-base font-semibold text-gray-900 mb-4">Seat status</h2>
@@ -129,7 +184,7 @@ export default function SeatGrid({
           <p className="text-xs text-gray-400 mt-0.5">
             {allowChoice
               ? "Tap any open seat to select it — you can pick multiple. Each seat is one entry in The Draw."
-              : "Seats are randomly assigned at checkout — the grid shows who's already in."}
+              : "Seats are randomly assigned — pick how many you want below."}
           </p>
         </div>
       ) : (
@@ -181,31 +236,74 @@ export default function SeatGrid({
         ))}
       </div>
 
-      {/* Selection summary + checkout - diners only */}
-      {isActive && !isChef && selected.length > 0 && (
-        <div className="mt-4 p-4 bg-orange-50 rounded-lg border border-orange-200">
+      {/* Random quantity picker — shown when allowChoice is false */}
+      {isActive && !isChef && authUser && !allowChoice && !claimSuccess && (
+        <div className="mt-4 p-4 bg-orange-50 rounded-xl border border-orange-200 space-y-3">
+          <div className="flex items-center justify-between">
+            <span className="text-sm font-medium text-gray-700">How many seats?</span>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setQuantity((q) => Math.max(1, q - 1))}
+                className="w-7 h-7 rounded-full border border-gray-300 text-gray-600 hover:bg-gray-100 text-sm flex items-center justify-center"
+              >
+                −
+              </button>
+              <span className="w-6 text-center font-semibold text-gray-900">{quantity}</span>
+              <button
+                type="button"
+                onClick={() => setQuantity((q) => Math.min(seats.filter(s => s.status === "available").length, q + 1))}
+                className="w-7 h-7 rounded-full border border-gray-300 text-gray-600 hover:bg-gray-100 text-sm flex items-center justify-center"
+              >
+                +
+              </button>
+            </div>
+          </div>
+          <div className="flex items-center justify-between text-sm border-t border-orange-200 pt-2">
+            <span className="text-gray-600">{quantity} seat{quantity > 1 ? "s" : ""} × ${(seatPrice / 100).toFixed(2)}</span>
+            <span className="font-semibold text-gray-900">${((quantity * seatPrice) / 100).toFixed(2)}</span>
+          </div>
+          {claimError && (
+            <p className="text-xs text-red-600">{claimError}</p>
+          )}
+          <button
+            type="button"
+            onClick={handleClaim}
+            disabled={claiming}
+            className="w-full py-2.5 rounded-lg bg-orange-400 hover:bg-orange-500 disabled:opacity-60 text-white text-sm font-semibold transition-colors"
+          >
+            {claiming ? "Reserving…" : `Reserve ${quantity} seat${quantity > 1 ? "s" : ""} — $${((quantity * seatPrice) / 100).toFixed(2)}`}
+          </button>
+        </div>
+      )}
+
+      {/* Specific seat selection summary + checkout */}
+      {isActive && !isChef && allowChoice && selected.length > 0 && !claimSuccess && (
+        <div className="mt-4 p-4 bg-orange-50 rounded-xl border border-orange-200">
           <div className="flex items-center justify-between mb-3">
             <span className="text-sm text-gray-700">
               {totalSelected} seat{totalSelected > 1 ? "s" : ""} selected
             </span>
             <span className="font-semibold text-gray-900">${totalCost.toFixed(2)}</span>
           </div>
+          {claimError && (
+            <p className="text-xs text-red-600 mb-2">{claimError}</p>
+          )}
           <div className="flex gap-2">
             <button
               type="button"
-              onClick={() => setSelected([])}
+              onClick={() => { setSelected([]); setClaimError(null); }}
               className="flex-1 py-2 rounded-lg border border-gray-200 text-sm text-gray-600 hover:bg-gray-50 transition-colors"
             >
               Clear
             </button>
             <button
               type="button"
-              onClick={() => {
-                alert(`Sandbox mode: Would checkout ${totalSelected} seat(s) for $${totalCost.toFixed(2)}\nSeats: ${selected.join(", ")}`);
-              }}
-              className="flex-grow py-2 rounded-lg bg-orange-400 hover:bg-orange-500 text-white text-sm font-medium transition-colors"
+              onClick={handleClaim}
+              disabled={claiming}
+              className="flex-grow py-2 rounded-lg bg-orange-400 hover:bg-orange-500 disabled:opacity-60 text-white text-sm font-semibold transition-colors"
             >
-              Reserve {totalSelected} seat{totalSelected > 1 ? "s" : ""} — ${totalCost.toFixed(2)}
+              {claiming ? "Reserving…" : `Reserve ${totalSelected} seat${totalSelected > 1 ? "s" : ""} — $${totalCost.toFixed(2)}`}
             </button>
           </div>
         </div>

@@ -209,7 +209,7 @@ export default function PostDrawChef({ waffleId, status, winnerSeatNumber, drawn
       <div className="bg-white rounded-xl shadow-sm p-6">
         <h2 className="text-base font-semibold text-gray-900 mb-3">Escrow</h2>
         <div className="flex items-center justify-between mb-2">
-          <span className="text-sm text-gray-600">Pot locked</span>
+          <span className="text-sm text-gray-600">Funds in escrow</span>
           <span className="font-semibold text-green-600">
             ${totalPot.toLocaleString("en-US", { minimumFractionDigits: 2 })}
           </span>

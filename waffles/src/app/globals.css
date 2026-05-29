@@ -1,5 +1,17 @@
 @import "tailwindcss";
 
+@font-face {
+  font-family: "PublicaPlay";
+  src: url("/fonts/PublicaPlay-Regular.otf") format("opentype");
+  font-weight: normal;
+  font-style: normal;
+  font-display: swap;
+}
+
+.font-brand {
+  font-family: "PublicaPlay", system-ui, sans-serif;
+}
+
 :root {
   --background: #FFF8EE;
   --foreground: #1a1a1a;
@@ -15,7 +27,12 @@
 }
 
 body {
-  background: var(--background);
+  /* Warm orange top-left → cream center → soft blue bottom-right */
+  background:
+    radial-gradient(ellipse at 15% 5%,  #F5C54A 0%, #FAD97A 15%, transparent 55%),
+    radial-gradient(ellipse at 90% 95%, #A8D8F0 0%, #C8E9FA 20%, transparent 55%),
+    #FFF8EE;
+  background-attachment: fixed;
   color: var(--foreground);
   font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;

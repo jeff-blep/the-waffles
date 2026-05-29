@@ -12,7 +12,7 @@ export default function PotDisplay({
   declaredValue: number;
 }) {
   const isChef = useIsChef(chefId);
-  const label = isChef ? "Total pot" : "Item value";
+  const label = isChef ? "Seat revenue" : "Item value";
   const value = isChef ? totalPot : declaredValue / 100;
 
   return (
